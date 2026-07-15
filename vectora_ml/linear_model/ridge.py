@@ -15,35 +15,6 @@ from vectora_ml.utils.validation import check_array, check_X_y
 
 
 class Ridge(BaseEstimator):
-    """
-    Linear Regression with L2 regularization, trained with batch
-    gradient descent.
-
-    Minimizes: MSE + alpha * sum(coef_ ** 2)
-
-    The penalty shrinks coef_ toward zero (but not exactly to zero),
-    which helps when features are correlated or the model overfits.
-    Note the intercept is deliberately NOT penalized — penalizing it
-    would just tie the model's baseline output to the origin, which
-    has nothing to do with reducing overfitting.
-
-    Parameters
-    ----------
-    alpha : float, default=1.0
-        Regularization strength. alpha=0 reduces this to plain
-        LinearRegression. Larger alpha means more shrinkage.
-
-    learning_rate : float, default=0.01
-        Step size for gradient descent.
-
-    max_iter : int, default=1000
-        Maximum number of gradient descent updates.
-
-    tol : float, default=1e-6
-        If the gradient's magnitude drops below this value,
-        training stops early (the model has converged).
-    """
-
     def __init__(
         self,
         alpha=1.0,
@@ -70,9 +41,6 @@ class Ridge(BaseEstimator):
         self.max_iter = max_iter
         self.tol = tol
 
-        # Not set here on purpose: `_check_is_fitted` uses hasattr(), so
-        # setting these to None in __init__ would make the estimator look
-        # "fitted" immediately. They only exist after fit() runs.
         self.loss_history_ = []
 
     def fit(self, X, y):
