@@ -1,0 +1,10 @@
+pyproject.toml
+tests/test_exceptions.py
+vectora_ml/__init__.py
+vectora_ml.egg-info/PKG-INFO
+vectora_ml.egg-info/SOURCES.txt
+vectora_ml.egg-info/dependency_links.txt
+vectora_ml.egg-info/requires.txt
+vectora_ml.egg-info/top_level.txt
+vectora_ml/core/__init__.py
+vectora_ml/core/exceptions.py
