@@ -11,9 +11,6 @@
 
 ---
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
 Vectora-ML is a lightweight machine learning library implementing classical machine learning algorithms entirely from scratch using NumPy. The project emphasizes algorithmic understanding, clean software architecture, reusable APIs, and comprehensive testing while maintaining minimal external dependencies. Implementations are independent of scikit-learn and are validated against trusted reference implementations where appropriate.
 
 ---
