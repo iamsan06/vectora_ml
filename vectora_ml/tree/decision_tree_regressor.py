@@ -1,4 +1,9 @@
+"""
+Decision Tree Regressor via recursive binary splitting (variance reduction).
+"""
+
 import numpy as np
+
 from vectora_ml.core.estimator import BaseEstimator
 from vectora_ml.core.exceptions import (
     DimensionMismatchError,
@@ -13,18 +18,17 @@ class DecisionTreeRegressor(BaseEstimator):
     """
     Decision Tree Regressor trained via recursive binary splitting.
 
-    This is the regression counterpart to DecisionTreeClassifier: same
-    recursive splitting and stopping logic, but instead of impurity
-    (Gini/entropy) over class labels, splits are chosen to minimize the
-    weighted variance of the target in the two children. A split is
-    "good" here if it groups similar target values together — variance
-    reduction is impurity reduction's equivalent for continuous targets.
-    Leaves predict the mean target value of the samples that reached
-    them.
+    Same recursive splitting and stopping logic as
+    DecisionTreeClassifier, but splits are chosen to minimize the
+    weighted variance of the target in the two children rather than
+    impurity over class labels. Leaves predict the mean target value
+    of the samples that reached them.
+
+    After fitting, `feature_importances_` reports how much each
+    feature contributed to reducing variance across the whole tree.
 
     Primarily exists as the weak learner used inside
-    GradientBoostingRegressor, which fits a shallow tree like this one
-    to residuals at every boosting round.
+    GradientBoostingRegressor.
 
     Parameters
     ----------
@@ -53,17 +57,17 @@ class DecisionTreeRegressor(BaseEstimator):
 
     @staticmethod
     def _variance(y):
-        """
-        Population variance of y. 0 for a node whose samples all share
-        the same target value — a perfectly "pure" regression leaf.
-        """
-
         if len(y) == 0:
             return 0.0
 
         return np.var(y)
 
     def _best_split(self, X, y):
+        """
+        Returns None if no split reduces variance, otherwise
+        (feature_index, threshold, gain).
+        """
+
         n_samples, n_features = X.shape
         parent_variance = self._variance(y)
 
@@ -105,13 +109,11 @@ class DecisionTreeRegressor(BaseEstimator):
         if best_feature is None:
             return None
 
-        return best_feature, best_threshold
+        return best_feature, best_threshold, best_gain
 
     def _build_tree(self, X, y, depth):
         n_samples, n_features = X.shape
 
-        # Stopping conditions: max depth reached, too few samples to
-        # split further, or the node is already "pure" (zero variance).
         if (
             (self.max_depth is not None and depth >= self.max_depth)
             or n_samples < self.min_samples_split
@@ -122,10 +124,16 @@ class DecisionTreeRegressor(BaseEstimator):
         split = self._best_split(X, y)
 
         if split is None:
-            # No candidate split reduced variance at all.
             return Node(value=np.mean(y))
 
-        feature_index, threshold = split
+        feature_index, threshold, gain = split
+
+        # Feature importance: variance reduction from this split,
+        # weighted by the fraction of total training samples that
+        # passed through this node.
+        self._raw_importances[feature_index] += (
+            (n_samples / self._root_n_samples) * gain
+        )
 
         left_mask = X[:, feature_index] <= threshold
         right_mask = ~left_mask
@@ -143,13 +151,25 @@ class DecisionTreeRegressor(BaseEstimator):
     def fit(self, X, y):
         """
         Train the regression tree by recursively splitting on the
-        feature/threshold pair that most reduces variance at each node.
+        feature/threshold pair that most reduces variance at each
+        node. Also computes `feature_importances_`.
         """
 
         X, y = check_X_y(X, y)
 
         self.n_features_in_ = X.shape[1]
+
+        self._root_n_samples = X.shape[0]
+        self._raw_importances = np.zeros(self.n_features_in_)
+
         self.root_ = self._build_tree(X, y, depth=0)
+
+        total = np.sum(self._raw_importances)
+
+        if total > 0:
+            self.feature_importances_ = self._raw_importances / total
+        else:
+            self.feature_importances_ = self._raw_importances.copy()
 
         self._mark_fitted()
 
@@ -166,8 +186,7 @@ class DecisionTreeRegressor(BaseEstimator):
 
     def predict(self, X):
         """
-        Predict target values for samples in X by routing each sample
-        from the root to a leaf.
+        Predict target values for samples in X.
         """
 
         self._check_is_fitted(["root_", "n_features_in_"])

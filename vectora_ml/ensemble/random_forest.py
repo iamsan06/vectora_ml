@@ -22,16 +22,15 @@ class RandomForestClassifier(BaseEstimator):
     trained on a bootstrap sample of the data, that vote on the
     final prediction.
 
-    Two sources of randomness decorrelate the trees from each other,
-    which is what makes averaging them help:
-      1. Bagging — each tree sees a different bootstrap sample (drawn
-         with replacement) rather than the full training set.
+    Two sources of randomness decorrelate the trees from each other:
+      1. Bagging — each tree sees a different bootstrap sample.
       2. Per-split feature subsampling — each tree only considers
-         `max_features` features at each split, handled internally by
-         DecisionTreeClassifier. Without this, trees trained on similar
-         bootstrap samples tend to pick the same strong feature at the
-         root every time and end up highly correlated with each other,
-         which defeats the point of averaging.
+         `max_features` features at each split.
+
+    After fitting, `feature_importances_` is the average of every
+    tree's own `feature_importances_`. Since each tree's importances
+    already sum to 1, the average does too — no separate normalization
+    needed.
 
     Parameters
     ----------
@@ -48,14 +47,10 @@ class RandomForestClassifier(BaseEstimator):
         Impurity measure used by each tree.
 
     max_features : None, "sqrt", "log2", int, or float, default="sqrt"
-        Number of features each tree considers per split. Defaults to
-        "sqrt", the standard Random Forest choice — with max_features=
-        None every tree would consider all features at every split,
-        which makes this bagging (bagged trees) rather than a proper
-        random forest.
+        Number of features each tree considers per split.
 
     random_state : int or None, default=None
-        Seed controlling both the bootstrap sampling and each tree's
+        Seed controlling both bootstrap sampling and each tree's
         feature subsampling, for reproducibility.
     """
 
@@ -90,8 +85,6 @@ class RandomForestClassifier(BaseEstimator):
                 "criterion must be 'gini' or 'entropy'."
             )
 
-        # Reuses the same validation logic as DecisionTreeClassifier
-        # rather than duplicating the if/elif chain here.
         DecisionTreeClassifier._validate_max_features(max_features)
 
         self.n_estimators = n_estimators
@@ -104,7 +97,8 @@ class RandomForestClassifier(BaseEstimator):
     def fit(self, X, y):
         """
         Train the forest: fit n_estimators Decision Trees, each on an
-        independent bootstrap sample of (X, y).
+        independent bootstrap sample of (X, y). Also averages every
+        tree's `feature_importances_` into the forest's own.
         """
 
         X, y = check_X_y(X, y)
@@ -123,8 +117,6 @@ class RandomForestClassifier(BaseEstimator):
             X_sample = X[bootstrap_idx]
             y_sample = y[bootstrap_idx]
 
-            # Each tree gets its own seed (derived from the forest's rng)
-            # so their internal feature subsampling isn't all identical.
             tree_seed = int(rng.integers(0, 2**31 - 1))
 
             tree = DecisionTreeClassifier(
@@ -138,6 +130,10 @@ class RandomForestClassifier(BaseEstimator):
             tree.fit(X_sample, y_sample)
 
             self.trees_.append(tree)
+
+        self.feature_importances_ = np.mean(
+            [tree.feature_importances_ for tree in self.trees_], axis=0
+        )
 
         self._mark_fitted()
 
@@ -157,8 +153,6 @@ class RandomForestClassifier(BaseEstimator):
                 f"Expected {self.n_features_in_} features, but got {X.shape[1]}."
             )
 
-        # Shape (n_estimators, n_samples): each row is one tree's
-        # predictions for every sample.
         tree_predictions = np.array([tree.predict(X) for tree in self.trees_])
 
         predictions = np.array(

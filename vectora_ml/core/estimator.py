@@ -23,12 +23,23 @@ class BaseEstimator(ABC):
         """
         pass
 
-    @abstractmethod
     def predict(self, X):
         """
         Predict outputs.
+
+        Only meaningful for estimators that actually make predictions
+        (regressors, classifiers, ensembles). NOT abstract on purpose:
+        transform-only estimators (StandardScaler, MinMaxScaler, PCA)
+        don't have a natural predict() and simply don't override this
+        — calling it on one raises NotImplementedError below rather
+        than blocking instantiation entirely, which is what happened
+        when this was `@abstractmethod`.
         """
-        pass
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement predict(). "
+            "If this is a transformer, use transform() instead."
+        )
 
     def get_params(self):
         """

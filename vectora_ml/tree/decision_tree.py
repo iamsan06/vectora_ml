@@ -26,8 +26,10 @@ class DecisionTreeClassifier(BaseEstimator):
     Supports per-sample weighting via `fit(X, y, sample_weight=...)`.
     With uniform weights (the default) this behaves exactly like a
     plain decision tree; non-uniform weights let boosting algorithms
-    like AdaBoost reuse this class as their weak learner, focusing
-    later trees on samples earlier trees got wrong.
+    like AdaBoost reuse this class as their weak learner.
+
+    After fitting, `feature_importances_` reports how much each
+    feature contributed to reducing impurity across the whole tree.
 
     Parameters
     ----------
@@ -39,18 +41,12 @@ class DecisionTreeClassifier(BaseEstimator):
         Minimum number of samples a node must have to be split further.
 
     criterion : {"gini", "entropy"}, default="gini"
-        Impurity measure used to evaluate splits. Gini and entropy
-        both measure "how mixed" a node's classes are and tend to pick
-        similar splits in practice — Gini is slightly cheaper (no log).
+        Impurity measure used to evaluate splits.
 
     max_features : None, "sqrt", "log2", int, or float, default=None
-        Number of features to consider at each split.
-        - None: consider all features (a plain decision tree).
-        - "sqrt" / "log2": consider sqrt(n_features) / log2(n_features).
-        - int: consider exactly that many features.
-        - float in (0, 1]: consider that fraction of features.
-        Restricting this decorrelates trees from each other, which is
-        what RandomForestClassifier relies on this class for.
+        Number of features to consider at each split. Restricting this
+        decorrelates trees from each other, which is what
+        RandomForestClassifier relies on this class for.
 
     random_state : int or None, default=None
         Seed controlling feature subsampling when max_features is set.
@@ -166,8 +162,6 @@ class DecisionTreeClassifier(BaseEstimator):
         for label in np.unique(y):
             p = np.sum(weights[y == label]) / total_weight
 
-            # 0 * log2(0) is undefined; it contributes 0 anyway, so
-            # skip it rather than computing it.
             if p > 0:
                 entropy -= p * np.log2(p)
 
@@ -184,11 +178,6 @@ class DecisionTreeClassifier(BaseEstimator):
     # ------------------------------------------------------------------
 
     def _max_features_count(self, n_features):
-        """
-        Resolve self.max_features (which may be a string/int/float/None)
-        into a concrete number of features to consider at a split.
-        """
-
         if self.max_features is None:
             return n_features
 
@@ -204,14 +193,6 @@ class DecisionTreeClassifier(BaseEstimator):
         return min(self.max_features, n_features)  # int
 
     def _select_feature_subset(self, n_features):
-        """
-        Pick which features are eligible for splitting at this node.
-        With max_features=None every feature is eligible (a plain
-        decision tree). Otherwise a random subset is drawn — this is
-        the "random" part of what makes a Random Forest random, applied
-        per-split rather than once per tree.
-        """
-
         if self.max_features is None:
             return np.arange(n_features)
 
@@ -224,7 +205,8 @@ class DecisionTreeClassifier(BaseEstimator):
         Search the given features for the (feature, threshold) pair
         that most reduces weighted impurity, evaluating every midpoint
         between consecutive sorted unique values as a candidate
-        threshold. Returns None if no split improves on the parent.
+        threshold. Returns None if no split improves on the parent,
+        otherwise (feature_index, threshold, gain).
         """
 
         total_weight = np.sum(weights)
@@ -269,15 +251,10 @@ class DecisionTreeClassifier(BaseEstimator):
         if best_feature is None:
             return None
 
-        return best_feature, best_threshold
+        return best_feature, best_threshold, best_gain
 
     @staticmethod
     def _majority_class(y, weights):
-        """
-        Weighted majority vote: the class with the most total sample
-        weight behind it, not just the most raw votes.
-        """
-
         labels = np.unique(y)
         weighted_counts = [np.sum(weights[y == label]) for label in labels]
 
@@ -287,8 +264,6 @@ class DecisionTreeClassifier(BaseEstimator):
         n_samples, n_features = X.shape
         n_labels = len(np.unique(y))
 
-        # Stopping conditions: max depth reached, too few samples to
-        # split further, or the node is already pure.
         if (
             (self.max_depth is not None and depth >= self.max_depth)
             or n_samples < self.min_samples_split
@@ -301,10 +276,19 @@ class DecisionTreeClassifier(BaseEstimator):
         split = self._best_split(X, y, weights, feature_indices)
 
         if split is None:
-            # No candidate split improved on the parent's impurity.
             return Node(value=self._majority_class(y, weights))
 
-        feature_index, threshold = split
+        feature_index, threshold, gain = split
+
+        # Feature importance: how much this single split reduced
+        # impurity, weighted by what fraction of the TOTAL training
+        # weight passed through this node. A split near the root (most
+        # samples affected) counts for more than one deep in the tree
+        # (few samples affected) — same idea sklearn uses.
+        node_weight = np.sum(weights)
+        self._raw_importances[feature_index] += (
+            (node_weight / self._root_weight_total) * gain
+        )
 
         left_mask = X[:, feature_index] <= threshold
         right_mask = ~left_mask
@@ -327,13 +311,12 @@ class DecisionTreeClassifier(BaseEstimator):
         """
         Train the decision tree by recursively splitting on the
         feature/threshold pair that most reduces weighted impurity at
-        each node.
+        each node. Also computes `feature_importances_`.
 
         Parameters
         ----------
         sample_weight : array-like of shape (n_samples,), optional
-            Per-sample weights. Defaults to uniform weights, which
-            makes this identical to an unweighted decision tree.
+            Per-sample weights. Defaults to uniform weights.
         """
 
         X, y = check_X_y(X, y)
@@ -352,7 +335,19 @@ class DecisionTreeClassifier(BaseEstimator):
         self.n_features_in_ = X.shape[1]
         self._rng = np.random.default_rng(self.random_state)
 
+        self._root_weight_total = np.sum(weights)
+        self._raw_importances = np.zeros(self.n_features_in_)
+
         self.root_ = self._build_tree(X, y, weights, depth=0)
+
+        # Normalize so importances sum to 1 (0 if the tree is a single
+        # leaf and never split at all).
+        total = np.sum(self._raw_importances)
+
+        if total > 0:
+            self.feature_importances_ = self._raw_importances / total
+        else:
+            self.feature_importances_ = self._raw_importances.copy()
 
         self._mark_fitted()
 
@@ -395,9 +390,7 @@ class DecisionTreeClassifier(BaseEstimator):
 
     def print_tree(self, feature_names=None):
         """
-        Print an indented text representation of the tree. A minimal
-        stand-in for a graphical plot — good enough to sanity-check
-        what the tree actually learned.
+        Print an indented text representation of the tree.
         """
 
         self._check_is_fitted(["root_"])
